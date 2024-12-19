@@ -1,5 +1,5 @@
 //! This example uses the RP Pico W board Wifi chip (cyw43).
-//! Creates an Access point Wifi network and creates a TCP endpoint on port 1234.
+//! Connects to specified Wifi network and creates a TCP endpoint on port 1234.
 
 #![no_std]
 #![no_main]
@@ -7,6 +7,7 @@
 
 use core::str::from_utf8;
 
+use cyw43::JoinOptions;
 use cyw43_pio::PioSpi;
 use defmt::*;
 use embassy_executor::Spawner;
@@ -15,8 +16,9 @@ use embassy_net::{Config, StackResources};
 use embassy_rp::bind_interrupts;
 use embassy_rp::clocks::RoscRng;
 use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, PIO0};
-use embassy_rp::pio::{InterruptHandler, Pio};
+use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
+use embassy_rp::pio::{InterruptHandler as PioInterruptHandler, Pio};
+use embassy_rp::usb::{InterruptHandler as UsbInterruptHandler, Driver};
 use embassy_time::Duration;
 use embedded_io_async::Write;
 use rand::RngCore;
@@ -24,8 +26,17 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
-    PIO0_IRQ_0 => InterruptHandler<PIO0>;
+    PIO0_IRQ_0 => PioInterruptHandler<PIO0>;
+    USBCTRL_IRQ => UsbInterruptHandler<USB>;
 });
+
+#[embassy_executor::task]
+async fn logger_task(driver: Driver<'static, USB>) {
+    embassy_usb_logger::run!(1024, log::LevelFilter::Info, driver);
+}
+
+const WIFI_NETWORK: &str = "hades";
+const WIFI_PASSWORD: &str = "tutla_53";
 
 #[embassy_executor::task]
 async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
@@ -39,11 +50,14 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    info!("Hello World!");
-
+    
     let p = embassy_rp::init(Default::default());
-    let mut rng = RoscRng;
+    let driver = Driver::new(p.USB, Irqs);
+    spawner.spawn(logger_task(driver)).unwrap();
+    
+    log::info!("Hello World!");
 
+    let mut rng = RoscRng;
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
@@ -69,9 +83,9 @@ async fn main(spawner: Spawner) {
         .set_power_management(cyw43::PowerManagementMode::PowerSave)
         .await;
 
-    // Use a link-local address for communication without DHCP server
+    // let config = Config::dhcpv4(Default::default());
     let config = Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(169, 254, 1, 1), 16),
+        address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(192, 168, 91, 38), 16),
         dns_servers: heapless::Vec::new(),
         gateway: None,
     });
@@ -85,8 +99,22 @@ async fn main(spawner: Spawner) {
 
     unwrap!(spawner.spawn(net_task(runner)));
 
-    //control.start_ap_open("cyw43", 5).await;
-    control.start_ap_wpa2("cyw43", "password", 5).await;
+    loop {
+        match control
+            .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
+            .await
+        {
+            Ok(_) => break,
+            Err(err) => {
+                log::info!("join failed with status={}", err.status);
+            }
+        }
+    }
+    
+    match stack.config_v4(){
+        Some(value) => log::info!("Server Address: {:?}", value.address.address()),
+        None => log::warn!("Unable to Get the Adrress")
+    }    
 
     // And now we can use it!
 
@@ -96,37 +124,44 @@ async fn main(spawner: Spawner) {
 
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(Duration::from_secs(10)));
+        socket.set_timeout(Some(Duration::from_secs(600)));
 
         control.gpio_set(0, false).await;
-        info!("Listening on TCP:1234...");
+
+        match stack.config_v4(){
+            Some(value) => log::info!("Server Address: {:?}", value.address.address()),
+            None => log::warn!("Unable to Get the Adrress")
+        } 
+
+        log::info!("Listening on TCP:1234...");
+
         if let Err(e) = socket.accept(1234).await {
-            warn!("accept error: {:?}", e);
+            log::warn!("accept error: {:?}", e);
             continue;
         }
 
-        info!("Received connection from {:?}", socket.remote_endpoint());
+        log::info!("Received connection from {:?}", socket.remote_endpoint());
         control.gpio_set(0, true).await;
 
         loop {
             let n = match socket.read(&mut buf).await {
                 Ok(0) => {
-                    warn!("read EOF");
+                    log::warn!("read EOF");
                     break;
                 }
                 Ok(n) => n,
                 Err(e) => {
-                    warn!("read error: {:?}", e);
+                    log::warn!("read error: {:?}", e);
                     break;
                 }
             };
 
-            info!("rxd {}", from_utf8(&buf[..n]).unwrap());
+            log::info!("rxd {}", from_utf8(&buf[..n]).unwrap());
 
             match socket.write_all(&buf[..n]).await {
                 Ok(()) => {}
                 Err(e) => {
-                    warn!("write error: {:?}", e);
+                    log::warn!("write error: {:?}", e);
                     break;
                 }
             };
