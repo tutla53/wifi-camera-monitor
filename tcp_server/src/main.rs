@@ -19,7 +19,7 @@ use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
 use embassy_rp::pio::{InterruptHandler as PioInterruptHandler, Pio};
 use embassy_rp::usb::{InterruptHandler as UsbInterruptHandler, Driver};
-use embassy_time::Duration;
+use embassy_time::{Duration, Timer};
 use embedded_io_async::Write;
 use rand::RngCore;
 use static_cell::StaticCell;
@@ -61,13 +61,6 @@ async fn main(spawner: Spawner) {
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
-    // To make flashing faster for development, you may want to flash the firmwares independently
-    // at hardcoded addresses, instead of baking them into the program with `include_bytes!`:
-    //     probe-rs download 43439A0.bin --binary-format bin --chip RP2040 --base-address 0x10100000
-    //     probe-rs download 43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
-    //let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
-    //let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
-
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
     let mut pio = Pio::new(p.PIO0, Irqs);
@@ -83,12 +76,8 @@ async fn main(spawner: Spawner) {
         .set_power_management(cyw43::PowerManagementMode::PowerSave)
         .await;
 
-    // let config = Config::dhcpv4(Default::default());
-    let config = Config::ipv4_static(embassy_net::StaticConfigV4 {
-        address: embassy_net::Ipv4Cidr::new(embassy_net::Ipv4Address::new(192, 168, 91, 38), 16),
-        dns_servers: heapless::Vec::new(),
-        gateway: None,
-    });
+    // Using DHCP config for the ipv4 address
+    let config = Config::dhcpv4(Default::default());
 
     // Generate random seed
     let seed = rng.next_u64();
@@ -110,11 +99,13 @@ async fn main(spawner: Spawner) {
             }
         }
     }
-    
-    match stack.config_v4(){
-        Some(value) => log::info!("Server Address: {:?}", value.address.address()),
-        None => log::warn!("Unable to Get the Adrress")
-    }    
+
+    // Wait for DHCP, not necessary when using static IP
+    info!("Waiting for DHCP...");
+    while !stack.is_config_up() {
+        Timer::after_millis(100).await;
+    }
+    log::info!("DHCP is now up!");
 
     // And now we can use it!
 
