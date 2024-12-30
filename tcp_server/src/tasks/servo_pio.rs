@@ -14,25 +14,38 @@ use {
                 PioPwm, 
                 PioPwmProgram,
             },
-            uart::{
-                PioUartRx,
-                PioUartRxProgram,
-            },
         },
     },
     embassy_time::Timer,
+    embassy_sync::{
+        signal::Signal,
+        blocking_mutex::raw::CriticalSectionRawMutex,
+    },
     {defmt_rtt as _, panic_probe as _},
 };
 
 const REFRESH_INTERVAL: u64 = 20000;
+static DRIVE_CONTROL: Signal<CriticalSectionRawMutex, Command> = Signal::new();
+
+pub enum Command {
+    Left(i16),
+    Right(i16),
+    Up(i16),
+    Down(i16)
+}
+
+pub fn send_command(command: Command) {
+    DRIVE_CONTROL.signal(command);
+}
+
+async fn wait_command() -> Command {
+    DRIVE_CONTROL.wait().await
+}
 
 #[embassy_executor::task]
 pub async fn servo_pio(r: ServoPioResources) {
-    let Pio { mut common, sm0, sm1, sm2, .. } = Pio::new(r.SERVO_PIO_CH, Irqs);
+    let Pio { mut common, sm0, sm1, .. } = Pio::new(r.SERVO_PIO_CH, Irqs);
     let prg = PioPwmProgram::new(&mut common);
-    let rx_program = PioUartRxProgram::new(&mut common);
-
-    let mut uart_rx = PioUartRx::new(9600, &mut common, sm2, r.UART_RX_PIN, &rx_program);
 
     let body_pwm_pio = PioPwm::new(&mut common, sm0, r.SERVO_BODY_PIN, &prg);
     let head_pwm_pio = PioPwm::new(&mut common, sm1, r.SERVO_HEAD_PIN, &prg);
@@ -61,17 +74,29 @@ pub async fn servo_pio(r: ServoPioResources) {
 
     let mut head_degree: i16 = 0;
     let mut body_degree: i16 = 0;
-    let inc: i16 = 1;
 
     loop {
-        match uart_rx.read_u8().await {
-            b'w' => {head_degree = head_degree + inc;},
-            b's' => {head_degree = head_degree - inc;},
-            b'a' => {body_degree = body_degree + inc;},
-            b'd' => {body_degree = body_degree - inc;},
-            _ => {}
+        let command = wait_command().await;
+        
+        match command {
+            Command::Up(inc) => {
+                head_degree = head_degree + inc;
+                log::info!("Up {}", head_degree);
+            },
+            Command::Down(inc) => {
+                head_degree = head_degree - inc;
+                log::info!("Down {}", head_degree);
+            },
+            Command::Left(inc) => {
+                body_degree = body_degree + inc;
+                log::info!("Left {}", body_degree);
+            },
+            Command::Right(inc) => {
+                body_degree = body_degree - inc;
+                log::info!("Right {}", body_degree);
+            }
         }
-
+        
         if head_degree<0 {head_degree = 0;}
         else if head_degree>180{head_degree = 180;}
         
