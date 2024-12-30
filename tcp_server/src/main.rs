@@ -5,17 +5,23 @@
 #![no_main]
 #![allow(async_fn_in_trait)]
 
+mod resources;
+mod tasks;
+mod builder;
+
 use {
-    core::str::{
-        from_utf8,
-        FromStr,
+    crate::resources::gpio_list::{Irqs, AssignedResources, ServoPioResources, NetworkResources},
+    crate::tasks::{
+        servo_pio::servo_pio,
+        servo_pio::Command,
+        servo_pio::send_command,
     },
+    
     cyw43::JoinOptions,
-    cyw43_pio::{
-        PioSpi,
-        DEFAULT_CLOCK_DIVIDER,
-    },
+    cyw43_pio::{PioSpi, DEFAULT_CLOCK_DIVIDER},
+    
     embassy_executor::Spawner,
+    embassy_time::{Duration, Timer},
     embassy_net::{
         tcp::TcpSocket,
         Config,
@@ -23,37 +29,49 @@ use {
         StackResources,
     },
     embassy_rp::{
-        bind_interrupts,
         clocks::RoscRng,
         gpio::{Level, Output},
         peripherals::{DMA_CH0, PIO0, USB},
-        pio::{InterruptHandler as PioInterruptHandler, Pio},
-        usb::{InterruptHandler as UsbInterruptHandler, Driver},
+        pio::Pio,
+        usb::Driver as UsbDriver,
     },
-    embassy_time::{
-        Duration, 
-        Timer,
-    },
+
     embedded_io_async::Write,
+    core::str::{from_utf8, FromStr},
     rand::RngCore,
     static_cell::StaticCell,
     defmt::*,
     {defmt_rtt as _, panic_probe as _},
 };
 
-bind_interrupts!(struct Irqs {
-    PIO0_IRQ_0 => PioInterruptHandler<PIO0>;
-    USBCTRL_IRQ => UsbInterruptHandler<USB>;
-});
-
-#[embassy_executor::task]
-async fn logger_task(driver: Driver<'static, USB>) {
-    embassy_usb_logger::run!(1024, log::LevelFilter::Info, driver);
-}
-
 const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 const CLIENT_NAME: &str = "Pico-W";
+const TCP_PORT: u16 = 1234;
+
+const CYW43_JOIN_ERROR: [&str; 16] = [
+    "Success", 
+    "Operation failed", 
+    "Operation timed out",
+    "Operation no matching network found",
+    "Operation was aborted",
+    "[Protocol Failure] Packet not acknowledged",
+    "AUTH or ASSOC packet was unsolicited",
+    "Attempt to ASSOC to an auto auth configuration",
+    "Scan results are incomplete",
+    "Scan aborted by another scan",
+    "Scan aborted due to assoc in progress",
+    "802.11h quiet period started",
+    "User disabled scanning (WLC_SET_SCANSUPPRESS)",
+    "No allowable channels to scat",
+    "Scan aborted due to CCX fast roam",
+    "Abort channel select"
+];
+
+#[embassy_executor::task]
+async fn logger_task(driver: UsbDriver<'static, USB>) {
+    embassy_usb_logger::run!(1024, log::LevelFilter::Info, driver);
+}
 
 #[embassy_executor::task]
 async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
@@ -67,29 +85,32 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    let ph = embassy_rp::init(Default::default());
+    let usb_driver = UsbDriver::new(ph.USB, Irqs);
+    let r = split_resources!(ph);
+    let p = r.network_resources;
     
-    let p = embassy_rp::init(Default::default());
-    let driver = Driver::new(p.USB, Irqs);
-    spawner.spawn(logger_task(driver)).unwrap();
-    
+    unwrap!(spawner.spawn(logger_task(usb_driver)));
+    unwrap!(spawner.spawn(servo_pio(r.servo_pio_resources)));
+
     log::info!("Preparing the Server!");
 
     let mut rng = RoscRng;
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
-    let pwr = Output::new(p.PIN_23, Level::Low);
-    let cs = Output::new(p.PIN_25, Level::High);
-    let mut pio = Pio::new(p.PIO0, Irqs);
+    let pwr = Output::new(p.POWER_PIN, Level::Low);
+    let cs = Output::new(p.CS_PIN, Level::High);
+    let mut pio = Pio::new(p.NET_PIO_CH, Irqs);
     let spi = PioSpi::new(
         &mut pio.common, 
         pio.sm0, 
         DEFAULT_CLOCK_DIVIDER,
         pio.irq0, 
         cs, 
-        p.PIN_24, 
-        p.PIN_29, 
-        p.DMA_CH0
+        p.SPI_PIN_24, 
+        p.SPI_PIN_29, 
+        p.NET_DMA_CH
     );
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
@@ -116,14 +137,15 @@ async fn main(spawner: Spawner) {
 
     unwrap!(spawner.spawn(net_task(runner)));
 
+    // Connecting to the Network
     loop {
-        match control
-            .join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes()))
-            .await
-        {
+        match control.join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes())).await {
             Ok(_) => break,
             Err(err) => {
-                log::info!("join failed with status={}", err.status);
+                if err.status<16 {
+                    let error_code = err.status as usize;
+                    log::info!("Join failed with error = {}", CYW43_JOIN_ERROR[error_code]);
+                }
             }
         }
     }
@@ -140,6 +162,7 @@ async fn main(spawner: Spawner) {
     let mut buf = [0; 4096];
 
     loop {
+        // Network Loop
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         socket.set_timeout(Some(Duration::from_secs(600)));
 
@@ -150,10 +173,10 @@ async fn main(spawner: Spawner) {
             None => log::warn!("Unable to Get the Adrress")
         } 
 
-        log::info!("Listening on TCP:1234...");
+        log::info!("Listening on TCP: {}...", TCP_PORT);
 
-        if let Err(e) = socket.accept(1234).await {
-            log::warn!("accept error: {:?}", e);
+        if let Err(e) = socket.accept(TCP_PORT).await {
+            log::warn!("Accept Error: {:?}", e);
             continue;
         }
 
@@ -166,19 +189,32 @@ async fn main(spawner: Spawner) {
                     log::warn!("[Read EOF]: Connection is Closed");
                     break;
                 }
-                Ok(n) => n,
+                Ok(n) => {
+                    // Next --> Parse the command
+                    n
+                },
                 Err(e) => {
                     log::warn!("Read Error: {:?}", e);
+                    log::warn!("Connection is Closed");
                     break;
                 }
             };
 
             log::info!("rxd {}", from_utf8(&buf[..n]).unwrap());
+            send_command(Command::Left(90));
+            Timer::after_millis(100).await;
+            send_command(Command::Right(90));
+            Timer::after_millis(100).await;
+            send_command(Command::Up(90));
+            Timer::after_millis(100).await;
+            send_command(Command::Down(90));
+            Timer::after_millis(100).await;
 
             match socket.write_all(&buf[..n]).await {
                 Ok(()) => {}
                 Err(e) => {
                     log::warn!("Write Error: {:?}", e);
+                    log::warn!("Connection is Closed");
                     break;
                 }
             };
