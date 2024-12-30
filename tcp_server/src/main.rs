@@ -5,25 +5,44 @@
 #![no_main]
 #![allow(async_fn_in_trait)]
 
-use core::str::from_utf8;
-
-use cyw43::JoinOptions;
-use cyw43_pio::PioSpi;
-use defmt::*;
-use embassy_executor::Spawner;
-use embassy_net::tcp::TcpSocket;
-use embassy_net::{Config, StackResources};
-use embassy_rp::bind_interrupts;
-use embassy_rp::clocks::RoscRng;
-use embassy_rp::gpio::{Level, Output};
-use embassy_rp::peripherals::{DMA_CH0, PIO0, USB};
-use embassy_rp::pio::{InterruptHandler as PioInterruptHandler, Pio};
-use embassy_rp::usb::{InterruptHandler as UsbInterruptHandler, Driver};
-use embassy_time::{Duration, Timer};
-use embedded_io_async::Write;
-use rand::RngCore;
-use static_cell::StaticCell;
-use {defmt_rtt as _, panic_probe as _};
+use {
+    core::str::from_utf8,
+    cyw43::JoinOptions,
+    cyw43_pio::PioSpi,
+    embassy_executor::Spawner,
+    embassy_net::{
+        tcp::TcpSocket,
+        Config, 
+        StackResources,
+    },
+    embassy_rp::{
+        bind_interrupts,
+        clocks::RoscRng,
+        gpio::{
+            Level, 
+            Output,
+        },
+        peripherals::{
+            DMA_CH0, 
+            PIO0, 
+            USB,
+        },
+        pio::{
+            InterruptHandler as PioInterruptHandler, 
+            Pio,
+        },
+        usb::{
+            InterruptHandler as UsbInterruptHandler, 
+            Driver,
+        },
+    },
+    embassy_time::{Duration, Timer},
+    embedded_io_async::Write,
+    rand::RngCore,
+    static_cell::StaticCell,
+    defmt::*,
+    {defmt_rtt as _, panic_probe as _},
+};
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => PioInterruptHandler<PIO0>;
@@ -35,8 +54,8 @@ async fn logger_task(driver: Driver<'static, USB>) {
     embassy_usb_logger::run!(1024, log::LevelFilter::Info, driver);
 }
 
-const WIFI_NETWORK: &str = "hades";
-const WIFI_PASSWORD: &str = "tutla_53";
+const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
+const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
 
 #[embassy_executor::task]
 async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
