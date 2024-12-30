@@ -14,9 +14,13 @@ use {
 };
 
 assign_resources! {
-    led_resources: LedFadeResources {
-        PIO_CH: PIO0,
-        LED_PIN: PIN_25,
+    network_resources: NetworkResources {
+        NET_PIO_CH: PIO0,
+        POWER_PIN: PIN_23,
+        CS_PIN: PIN_25,
+        SPI_PIN_24: PIN_24,
+        SPI_PIN_29: PIN_29,
+        NET_DMA_CH: DMA_CH0,
     },
 
     servo_pio_resources: ServoPioResources {
