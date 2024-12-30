@@ -7,3 +7,5 @@ target = "thumbv6m-none-eabi"        # Cortex-M0 and Cortex-M0+
 
 [env]
 DEFMT_LOG = "debug"
+WIFI_NETWORK = "wifi-name"           # replace with your own value
+WIFI_PASSWORD = "put-pw-here"        # same
