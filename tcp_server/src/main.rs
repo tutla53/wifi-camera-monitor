@@ -6,37 +6,34 @@
 #![allow(async_fn_in_trait)]
 
 use {
-    core::str::from_utf8,
+    core::str::{
+        from_utf8,
+        FromStr,
+    },
     cyw43::JoinOptions,
-    cyw43_pio::PioSpi,
+    cyw43_pio::{
+        PioSpi,
+        DEFAULT_CLOCK_DIVIDER,
+    },
     embassy_executor::Spawner,
     embassy_net::{
         tcp::TcpSocket,
-        Config, 
+        Config,
+        DhcpConfig, 
         StackResources,
     },
     embassy_rp::{
         bind_interrupts,
         clocks::RoscRng,
-        gpio::{
-            Level, 
-            Output,
-        },
-        peripherals::{
-            DMA_CH0, 
-            PIO0, 
-            USB,
-        },
-        pio::{
-            InterruptHandler as PioInterruptHandler, 
-            Pio,
-        },
-        usb::{
-            InterruptHandler as UsbInterruptHandler, 
-            Driver,
-        },
+        gpio::{Level, Output},
+        peripherals::{DMA_CH0, PIO0, USB},
+        pio::{InterruptHandler as PioInterruptHandler, Pio},
+        usb::{InterruptHandler as UsbInterruptHandler, Driver},
     },
-    embassy_time::{Duration, Timer},
+    embassy_time::{
+        Duration, 
+        Timer,
+    },
     embedded_io_async::Write,
     rand::RngCore,
     static_cell::StaticCell,
@@ -56,6 +53,7 @@ async fn logger_task(driver: Driver<'static, USB>) {
 
 const WIFI_NETWORK: &str = env!("WIFI_NETWORK");
 const WIFI_PASSWORD: &str = env!("WIFI_PASSWORD");
+const CLIENT_NAME: &str = "Pico-W";
 
 #[embassy_executor::task]
 async fn cyw43_task(runner: cyw43::Runner<'static, Output<'static>, PioSpi<'static, PIO0, 0, DMA_CH0>>) -> ! {
@@ -74,7 +72,7 @@ async fn main(spawner: Spawner) {
     let driver = Driver::new(p.USB, Irqs);
     spawner.spawn(logger_task(driver)).unwrap();
     
-    log::info!("Hello World!");
+    log::info!("Preparing the Server!");
 
     let mut rng = RoscRng;
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
@@ -83,7 +81,16 @@ async fn main(spawner: Spawner) {
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
     let mut pio = Pio::new(p.PIO0, Irqs);
-    let spi = PioSpi::new(&mut pio.common, pio.sm0, pio.irq0, cs, p.PIN_24, p.PIN_29, p.DMA_CH0);
+    let spi = PioSpi::new(
+        &mut pio.common, 
+        pio.sm0, 
+        DEFAULT_CLOCK_DIVIDER,
+        pio.irq0, 
+        cs, 
+        p.PIN_24, 
+        p.PIN_29, 
+        p.DMA_CH0
+    );
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
@@ -96,7 +103,9 @@ async fn main(spawner: Spawner) {
         .await;
 
     // Using DHCP config for the ipv4 address
-    let config = Config::dhcpv4(Default::default());
+    let mut dhcp_config = DhcpConfig::default();
+    dhcp_config.hostname = Some(heapless::String::from_str(CLIENT_NAME).unwrap());
+    let config = Config::dhcpv4(dhcp_config);
 
     // Generate random seed
     let seed = rng.next_u64();
@@ -124,9 +133,7 @@ async fn main(spawner: Spawner) {
     while !stack.is_config_up() {
         Timer::after_millis(100).await;
     }
-    log::info!("DHCP is now up!");
-
-    // And now we can use it!
+    log::info!("DHCP is Now Up!");
 
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
@@ -150,18 +157,18 @@ async fn main(spawner: Spawner) {
             continue;
         }
 
-        log::info!("Received connection from {:?}", socket.remote_endpoint());
+        log::info!("Received Connection from {:?}", socket.remote_endpoint());
         control.gpio_set(0, true).await;
 
         loop {
             let n = match socket.read(&mut buf).await {
                 Ok(0) => {
-                    log::warn!("read EOF");
+                    log::warn!("[Read EOF]: Connection is Closed");
                     break;
                 }
                 Ok(n) => n,
                 Err(e) => {
-                    log::warn!("read error: {:?}", e);
+                    log::warn!("Read Error: {:?}", e);
                     break;
                 }
             };
@@ -171,7 +178,7 @@ async fn main(spawner: Spawner) {
             match socket.write_all(&buf[..n]).await {
                 Ok(()) => {}
                 Err(e) => {
-                    log::warn!("write error: {:?}", e);
+                    log::warn!("Write Error: {:?}", e);
                     break;
                 }
             };
