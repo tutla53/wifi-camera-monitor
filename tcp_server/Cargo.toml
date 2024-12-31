@@ -34,15 +34,19 @@ pio = "0.2.1"
 cortex-m = { version = "0.7.6", features = ["inline-asm"] }
 cortex-m-rt = "0.7.0"
 
+# OLED Display SSD1306 128x64
+ssd1306 = { version = "0.9.0", features = ["graphics"] }
+itoa = { version = "1.0.11", features = ["no-panic"] }
+
 # Process
 assign-resources = { version = "0.4.1", default-features = false }
 heapless = { version = "0.8", default-features = false }
 rand = { version = "0.8.5", default-features = false }
-static_cell = "2.1"
+static_cell = "2.1.0"
 
 # Debugging Related
-defmt = "0.3"
-defmt-rtt = "0.4"
+defmt = "0.3.8"
+defmt-rtt = "0.4.1"
 panic-probe = { version = "0.3", features = ["print-defmt"] }
 portable-atomic = { version = "1.5", features = ["critical-section"] }
 log = "0.4"

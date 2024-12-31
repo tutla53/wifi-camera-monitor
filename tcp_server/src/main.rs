@@ -11,11 +11,20 @@ mod tasks;
 mod builder;
 
 use {
-    crate::resources::gpio_list::{Irqs, AssignedResources, ServoPioResources, NetworkResources},
+    crate::resources::gpio_list::{
+        Irqs, 
+        AssignedResources, 
+        ServoPioResources, 
+        NetworkResources,
+        DisplayResources,
+    },
     crate::tasks::{
         servo_pio::servo_pio,
-        servo_pio::Command,
-        servo_pio::send_command,
+        servo_pio::Command as ServoCommand,
+        servo_pio::send_command as send_servo,
+        display::display,
+        display::send_command as send_display,
+        display::Command as DisplayCommand,
     },
     
     cyw43::JoinOptions,
@@ -94,6 +103,7 @@ async fn main(spawner: Spawner) {
     
     unwrap!(spawner.spawn(logger_task(usb_driver)));
     unwrap!(spawner.spawn(servo_pio(r.servo_pio_resources)));
+    unwrap!(spawner.spawn(display(r.display_resources)));
 
     log::info!("Preparing the Server!");
 
@@ -146,13 +156,8 @@ async fn main(spawner: Spawner) {
     loop {
         match control.join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes())).await {
             Ok(_) => {
-                for _ in 0..10 {
-                    control.gpio_set(0, true).await;
-                    Timer::after_millis(200).await;
-            
-                    control.gpio_set(0, false).await;
-                    Timer::after_millis(200).await;
-                }
+                send_display(DisplayCommand::Status(0));
+                Timer::after_millis(100).await;
                 break
             },
             Err(err) => {
@@ -160,6 +165,7 @@ async fn main(spawner: Spawner) {
                     let error_code = err.status as usize;
                     control.gpio_set(0, led_toggle).await;
                     led_toggle = !led_toggle;
+                    send_display(DisplayCommand::Status(error_code));
                     log::info!("Join failed with error = {}", CYW43_JOIN_ERROR[error_code]);
                 }
             }
@@ -185,10 +191,16 @@ async fn main(spawner: Spawner) {
         control.gpio_set(0, false).await;
 
         match stack.config_v4(){
-            Some(value) => log::info!("Server Address: {:?}", value.address.address()),
+            Some(value) => {
+                log::info!("Server Address: {:?}", value.address.address());
+                send_display(DisplayCommand::Addr(value.address));
+                Timer::after_millis(100).await;
+            },
             None => log::warn!("Unable to Get the Adrress")
-        } 
+        }
 
+        send_display(DisplayCommand::Status(16));
+        Timer::after_millis(100).await;
         log::info!("Listening on TCP: {}...", TCP_PORT);
 
         if let Err(e) = socket.accept(TCP_PORT).await {
@@ -196,6 +208,8 @@ async fn main(spawner: Spawner) {
             continue;
         }
 
+        send_display(DisplayCommand::Status(17));
+        Timer::after_millis(100).await;
         log::info!("Received Connection from {:?}", socket.remote_endpoint());
         control.gpio_set(0, true).await;
 
@@ -217,13 +231,13 @@ async fn main(spawner: Spawner) {
             };
 
             log::info!("rxd {}", from_utf8(&buf[..n]).unwrap());
-            send_command(Command::Left(90));
+            send_servo(ServoCommand::Left(90));
             Timer::after_millis(100).await;
-            send_command(Command::Right(90));
+            send_servo(ServoCommand::Right(90));
             Timer::after_millis(100).await;
-            send_command(Command::Up(90));
+            send_servo(ServoCommand::Up(90));
             Timer::after_millis(100).await;
-            send_command(Command::Down(90));
+            send_servo(ServoCommand::Down(90));
             Timer::after_millis(100).await;
 
             match socket.write_all(&buf[..n]).await {

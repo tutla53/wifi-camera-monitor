@@ -7,6 +7,7 @@ use {
         peripherals,
         pio::InterruptHandler as PioInterruptHandler,
         usb::InterruptHandler as UsbInterruptHandler,
+        i2c::InterruptHandler as I2cInterruptHandler,
     },
 };
 
@@ -24,11 +25,17 @@ assign_resources! {
         SERVO_PIO_CH: PIO1,
         SERVO_BODY_PIN: PIN_10,
         SERVO_HEAD_PIN: PIN_12,
-        UART_RX_PIN: PIN_5,
+    },
+
+    display_resources: DisplayResources {
+        I2C_CH: I2C0,
+        SCL_PIN: PIN_5,
+        SDA_PIN: PIN_4,
     },
 }
 
 bind_interrupts!(pub struct Irqs {
+    I2C0_IRQ => I2cInterruptHandler<peripherals::I2C0>;
     PIO0_IRQ_0 => PioInterruptHandler<peripherals::PIO0>;
     PIO1_IRQ_0 => PioInterruptHandler<peripherals::PIO1>;
     USBCTRL_IRQ => UsbInterruptHandler<peripherals::USB>;
