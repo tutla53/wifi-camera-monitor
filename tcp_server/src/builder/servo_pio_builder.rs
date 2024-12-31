@@ -1,4 +1,4 @@
-//! Servo PWM Builder with PIO
+// Servo PWM Builder with PIO
 
 use {
     core::time::Duration,
@@ -22,6 +22,7 @@ pub struct ServoPioBuilder<'d, T: Instance, const SM: usize> {
     max_degree_rotation: u64,
 }
 
+#[allow(unused)]
 impl<'d, T: Instance, const SM: usize> ServoPioBuilder<'d, T, SM> {
     pub fn new(pwm: PioPwm<'d, T, SM>) -> Self {
         Self {
@@ -71,6 +72,7 @@ pub struct Servo<'d, T: Instance, const SM: usize> {
     max_degree_rotation: u64,
 }
 
+#[allow(unused)]
 impl<'d, T: Instance, const SM: usize> Servo<'d, T, SM> {
     pub fn start(&mut self) {
         self.pwm.start();
