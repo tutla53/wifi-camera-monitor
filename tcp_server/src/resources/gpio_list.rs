@@ -1,7 +1,4 @@
-//! Resource Allocation Module
-//!
-//! This module defines the hardware resources used by various components of the robot.
-//! It uses the `assign_resources` macro to allocate specific pins and peripherals to each component.
+//  Resource Allocation Module
 
 use {
     assign_resources::assign_resources,
@@ -15,12 +12,12 @@ use {
 
 assign_resources! {
     network_resources: NetworkResources {
-        NET_PIO_CH: PIO0,
-        POWER_PIN: PIN_23,
-        CS_PIN: PIN_25,
-        SPI_PIN_24: PIN_24,
-        SPI_PIN_29: PIN_29,
-        NET_DMA_CH: DMA_CH0,
+        CYW43_PWR_PIN: PIN_23,
+        CYW43_CS_PIN: PIN_25,
+        CYW43_PIO_CH: PIO0,
+        CYW43_SPI_DIO: PIN_24,
+        CYW43_SPI_CLK: PIN_29,
+        CYW43_DMA_CH: DMA_CH0,
     },
 
     servo_pio_resources: ServoPioResources {
