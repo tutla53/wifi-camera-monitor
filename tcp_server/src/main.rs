@@ -1,5 +1,6 @@
-//! This example uses the RP Pico W board Wifi chip (cyw43).
-//! Connects to specified Wifi network and creates a TCP endpoint on port 1234.
+/*  Wireless 2 DOF Camera Monitor
+    - Controlling 2 Servo Motor via TCP Server
+*/
 
 #![no_std]
 #![no_main]
@@ -89,6 +90,7 @@ async fn main(spawner: Spawner) {
     let usb_driver = UsbDriver::new(ph.USB, Irqs);
     let r = split_resources!(ph);
     let p = r.network_resources;
+    let mut led_toggle = true;
     
     unwrap!(spawner.spawn(logger_task(usb_driver)));
     unwrap!(spawner.spawn(servo_pio(r.servo_pio_resources)));
@@ -99,18 +101,18 @@ async fn main(spawner: Spawner) {
     let fw = include_bytes!("../cyw43-firmware/43439A0.bin");
     let clm = include_bytes!("../cyw43-firmware/43439A0_clm.bin");
 
-    let pwr = Output::new(p.POWER_PIN, Level::Low);
-    let cs = Output::new(p.CS_PIN, Level::High);
-    let mut pio = Pio::new(p.NET_PIO_CH, Irqs);
+    let pwr = Output::new(p.CYW43_PWR_PIN, Level::Low);
+    let cs = Output::new(p.CYW43_CS_PIN, Level::High);
+    let mut pio = Pio::new(p.CYW43_PIO_CH, Irqs);
     let spi = PioSpi::new(
         &mut pio.common, 
         pio.sm0, 
         DEFAULT_CLOCK_DIVIDER,
         pio.irq0, 
         cs, 
-        p.SPI_PIN_24, 
-        p.SPI_PIN_29, 
-        p.NET_DMA_CH
+        p.CYW43_SPI_DIO, 
+        p.CYW43_SPI_CLK, 
+        p.CYW43_DMA_CH
     );
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
@@ -122,6 +124,9 @@ async fn main(spawner: Spawner) {
     control
         .set_power_management(cyw43::PowerManagementMode::PowerSave)
         .await;
+
+    log::info!("CYW43 has been set!");    
+    control.gpio_set(0, true).await;
 
     // Using DHCP config for the ipv4 address
     let mut dhcp_config = DhcpConfig::default();
@@ -140,10 +145,21 @@ async fn main(spawner: Spawner) {
     // Connecting to the Network
     loop {
         match control.join(WIFI_NETWORK, JoinOptions::new(WIFI_PASSWORD.as_bytes())).await {
-            Ok(_) => break,
+            Ok(_) => {
+                for _ in 0..10 {
+                    control.gpio_set(0, true).await;
+                    Timer::after_millis(200).await;
+            
+                    control.gpio_set(0, false).await;
+                    Timer::after_millis(200).await;
+                }
+                break
+            },
             Err(err) => {
                 if err.status<16 {
                     let error_code = err.status as usize;
+                    control.gpio_set(0, led_toggle).await;
+                    led_toggle = !led_toggle;
                     log::info!("Join failed with error = {}", CYW43_JOIN_ERROR[error_code]);
                 }
             }
@@ -156,6 +172,7 @@ async fn main(spawner: Spawner) {
         Timer::after_millis(100).await;
     }
     log::info!("DHCP is Now Up!");
+    control.gpio_set(0, false).await;
 
     let mut rx_buffer = [0; 4096];
     let mut tx_buffer = [0; 4096];
@@ -164,8 +181,7 @@ async fn main(spawner: Spawner) {
     loop {
         // Network Loop
         let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-        socket.set_timeout(Some(Duration::from_secs(600)));
-
+        socket.set_timeout(Some(Duration::from_secs(180)));
         control.gpio_set(0, false).await;
 
         match stack.config_v4(){
