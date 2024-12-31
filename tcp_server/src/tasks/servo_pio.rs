@@ -1,4 +1,7 @@
-//! Servo PIO Task with state machine 0 and 1 
+/*  Servo Task 
+    - Controlling Servo MG996R by using the PIO
+    - Commanded Angle will be sent from the TCP at the Main Task
+*/
 
 use {
     core::time::Duration,
@@ -10,10 +13,7 @@ use {
     embassy_rp::{
         pio::Pio,
         pio_programs::{
-            pwm::{
-                PioPwm, 
-                PioPwmProgram,
-            },
+            pwm::{PioPwm, PioPwmProgram},
         },
     },
     embassy_time::Timer,
@@ -64,11 +64,10 @@ pub async fn servo_pio(r: ServoPioResources) {
         .set_max_pulse_width(Duration::from_micros(2000))
         .build();
 
-    body_servo.stop();
-    head_servo.stop();
-    Timer::after_secs(1).await;
     body_servo.start();
     head_servo.start();
+    Timer::after_secs(1).await;
+
     body_servo.rotate(90);
     head_servo.rotate(90);
 
