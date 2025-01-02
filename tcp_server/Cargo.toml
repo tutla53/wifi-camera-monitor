@@ -40,6 +40,7 @@ itoa = { version = "1.0.11", features = ["no-panic"] }
 
 # Servo Builder Library
 rp2040-servo-pio = {git = "https://github.com/tutla53/embassy-rp-library.git"}
+# rp2040-servo-pio = {path = "../rp2040-servo-pio"}
 
 # Process
 assign-resources = { version = "0.4.1", default-features = false }
