@@ -5,7 +5,7 @@
 
 use {
     core::time::Duration,
-    crate::builder::servo_pio_builder::ServoPioBuilder,
+    rp2040_servo_pio::ServoPioBuilder,
     crate::resources::gpio_list::{
         Irqs,
         ServoPioResources,

@@ -8,7 +8,6 @@
 
 mod resources;
 mod tasks;
-mod builder;
 
 use {
     crate::resources::gpio_list::{
