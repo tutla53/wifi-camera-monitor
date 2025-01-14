@@ -64,7 +64,7 @@ const ENCODE_CODE: [&str; 18] = [
     "No allowable channels to scat                  ",
     "Scan aborted due to CCX fast roam              ",
     "Abort channel select                           ",
-    "Waiting on TCP                                 ",
+    "Listening on    Port 1234                     ",
     "TCP is Connected                               "
 
 ];
